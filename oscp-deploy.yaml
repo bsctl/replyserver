@@ -1,0 +1,144 @@
+---
+apiVersion: v1
+data:
+  testssl.crt:
+  testssl.key:
+kind: Secret
+metadata:
+  name: server-certs
+  namespace:
+type: Opaque
+---
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  labels:
+    app: test
+  name: test
+  namespace:
+spec:
+  replicas: 1
+  selector:
+    app: test
+  strategy:
+    rollingParams:
+      intervalSeconds: 1
+      maxSurge: 1
+      maxUnavailable: 0
+    type: Rolling
+  triggers:
+  - type: ConfigChange
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: container
+        image: bsctl/replyserver:latest
+        args:
+        - -cert=/opt/certs/testssl.crt
+        - -key=/opt/certs/testssl.key
+        ports:
+        - containerPort: 1968
+          name: https
+          protocol: TCP
+        - containerPort: 1969
+          name: http
+          protocol: TCP
+        - containerPort: 1936
+          name: probe
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /
+            port: probe
+            scheme: HTTP
+        livenessProbe:
+          httpGet:
+            path: /
+            port: probe
+            scheme: HTTP
+        volumeMounts:
+        - name: server-certs
+          mountPath: /opt/certs
+          readOnly: true
+      volumes:
+      - name: server-certs
+        secret:
+          defaultMode: 420
+          secretName: server-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testssl
+  namespace:
+spec:
+  type: ClusterIP
+  ports:
+  - name: testssl
+    port: 443
+    protocol: TCP
+    targetPort: 1968
+  selector:
+    app: test
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test
+  namespace:
+spec:
+  type: ClusterIP
+  ports:
+  - name: test
+    port: 80
+    protocol: TCP
+    targetPort: 1969
+  selector:
+    app: test
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  annotations:
+    haproxy.router.openshift.io/balance: source
+    #haproxy.router.openshift.io/balance: roundrobin
+    #haproxy.router.openshift.io/balance: leastconn
+  name: testssl
+  namespace:
+spec:
+  host: testssl.oscp.noverit.com
+  port:
+    targetPort: testssl
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: passthrough
+  to:
+    kind: Service
+    name: testssl
+    weight: 100
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  annotations:
+    haproxy.router.openshift.io/balance: source
+    #haproxy.router.openshift.io/balance: roundrobin
+    #haproxy.router.openshift.io/balance: leastconn
+  name: test
+  namespace:
+spec:
+  host: test.oscp.noverit.com
+  port:
+    targetPort: test
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: test
+    weight: 100
+  wildcardPolicy: None
